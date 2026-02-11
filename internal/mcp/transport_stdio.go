@@ -3,12 +3,14 @@ package mcp
 import (
 	"bufio"
 	"context"
+	"errors"
+	"fmt"
 	"os"
 )
 
 const (
 	initialScanBuf = 1024 * 1024
-	maxScanBuf     = 23 * 1024 * 1024
+	maxScanBuf     = 32 * 1024 * 1024
 )
 
 func (s *Server) ServeStdio(ctx context.Context) error {
@@ -62,5 +64,12 @@ func (s *Server) ServeStdio(ctx context.Context) error {
 		_ = out.Flush()
 	}
 
-	return in.Err()
+	if err := in.Err(); err != nil {
+		if errors.Is(err, bufio.ErrTooLong) {
+			fmt.Println(s.stderr, "input line is too long: increase scanner size or send smaller requests")
+		}
+		return err
+	}
+
+	return nil
 }

@@ -34,7 +34,7 @@ func (s *Server) dispatch(ctx context.Context, req Request) (any, *RPCError) {
 
 	defer func() {
 		if r := recover(); r != nil {
-			fmt.Fprintf(s.stderr, "panic in the handler %q: %v /n", req.Method, r)
+			fmt.Fprintf(s.stderr, "panic in the handler %q: %v \n", req.Method, r)
 		}
 	}()
 
