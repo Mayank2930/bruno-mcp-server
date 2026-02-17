@@ -1,13 +1,19 @@
 package mcp
 
-import "context"
+import (
+	"context"
+	"errors"
+
+	"github.com/Mayank2930/bruno-mcp-server/internal/workspace"
+)
 
 type InitializeParams struct {
 	ClientInfo map[string]any `json:"clientInfo,omitempty"`
 }
 
 type ToolCallParams struct {
-	Tool      string         `json:"tool"`
+	Name      string         `json:"name"`
+	Tool      string         `json:"tool:omitempty"`
 	Arguments map[string]any `json:"arguments,omitempty"`
 }
 
@@ -58,8 +64,49 @@ func (s *Server) handleToolList(ctx context.Context, req Request) (any, *RPCErro
 				},
 			},
 			{
+				"name":        "workspace.get",
+				"description": "Get a registered workspace by name",
+				"inputSchema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"name": map[string]any{"type": "string"},
+					},
+					"required": []string{"name"}, // <-- FIXED
+				},
+				"outputSchema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"name": map[string]any{"type": "string"},
+						"path": map[string]any{"type": "string"},
+					},
+				},
+			},
+			{
+				"name":        "workspace.list",
+				"description": "List registered workspaces",
+				"inputSchema": map[string]any{
+					"type":       "object",
+					"properties": map[string]any{}, // no args
+				},
+				"outputSchema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"workspaces": map[string]any{
+							"type": "array",
+							"items": map[string]any{
+								"type": "object",
+								"properties": map[string]any{
+									"name": map[string]any{"type": "string"},
+									"path": map[string]any{"type": "string"},
+								},
+							},
+						},
+					},
+				},
+			},
+			{
 				"name":        "collections.list",
-				"description": "List collections in a workspace (stub in Step 2)",
+				"description": "List collections in a workspace",
 				"inputSchema": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -77,6 +124,27 @@ func (s *Server) handleToolList(ctx context.Context, req Request) (any, *RPCErro
 					},
 				},
 			},
+			{
+				"name":        "requests.list",
+				"description": "List requests in a collection",
+				"inputSchema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"workspace":  map[string]any{"type": "string"},
+						"collection": map[string]any{"type": "string"},
+					},
+					"required": []string{"workspace", "collection"},
+				},
+				"outputSchema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"requests": map[string]any{
+							"type":  "array",
+							"items": map[string]any{"type": "string"},
+						},
+					},
+				},
+			},
 		},
 	}, nil
 }
@@ -86,29 +154,117 @@ func (s *Server) handleToolsCall(ctx context.Context, req Request) (any, *RPCErr
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
-	if params.Tool == "" {
-		return nil, NewError(CodeInvalidParams, "Invalid params: tool is required")
+
+	toolName := params.Name
+	if toolName == "" {
+		toolName = params.Tool
+	}
+	if toolName == "" {
+		return nil, NewError(CodeInvalidParams, "Invalid params: name is required")
 	}
 
-	switch params.Tool {
+	switch toolName {
+
 	case "workspace.register":
+		nameAny, ok := params.Arguments["name"]
+		if !ok {
+			return nil, NewError(CodeInvalidParams, "Invalid params: name is required")
+		}
+		pathAny, ok := params.Arguments["path"]
+		if !ok {
+			return nil, NewError(CodeInvalidParams, "Invalid params: path is required")
+		}
+
+		name, _ := nameAny.(string)
+		path, _ := pathAny.(string)
+
+		createIfMissing := false
+		if v, ok := params.Arguments["createIfMissing"]; ok {
+			if b, ok := v.(bool); ok {
+				createIfMissing = b
+			}
+		}
+
+		ws, err := s.registry.Register(name, path, createIfMissing)
+		if err != nil {
+			return nil, workspaceToRPCError(err)
+		}
+		return ws, nil
+
+	case "workspace.get":
+		nameAny, ok := params.Arguments["name"]
+		if !ok {
+			return nil, NewError(CodeInvalidParams, "Invalid params: name is required")
+		}
+		name, _ := nameAny.(string)
+
+		ws, err := s.registry.Get(name)
+		if err != nil {
+			return nil, workspaceToRPCError(err)
+		}
+		return ws, nil
+
+	case "workspace.list":
 		return map[string]any{
-			"tool": params.Tool,
-			"output": map[string]any{
-				"status": "stub",
-				"note":   "workspace.register will be implemented in Step 3",
-			},
+			"workspaces": s.registry.List(),
 		}, nil
+
 	case "collections.list":
-		return map[string]any{
-			"tool": params.Tool,
-			"output": map[string]any{
-				"status":      "stub",
-				"collections": []string{},
-				"note":        "collections.list will be implemented after Bruno adapter is added",
-			},
-		}, nil
+		wsNameAny, ok := params.Arguments["workspace"]
+		if !ok {
+			return nil, NewError(CodeInvalidParams, "Invalid params: workspace is required")
+		}
+		wsName, _ := wsNameAny.(string)
+
+		ws, err := s.registry.Get(wsName)
+		if err != nil {
+			return nil, workspaceToRPCError(err)
+		}
+
+		cols, err := s.bruno.ListCollections(ws.Path)
+		if err != nil {
+			return nil, NewError(CodeInternalError, err.Error())
+		}
+
+		return map[string]any{"collections": cols}, nil
+
+	case "requests.list":
+		wsNameAny, ok := params.Arguments["workspace"]
+		if !ok {
+			return nil, NewError(CodeInvalidParams, "Invalid params: workspace is required")
+		}
+		colAny, ok := params.Arguments["collection"]
+		if !ok {
+			return nil, NewError(CodeInvalidParams, "Invalid params: collection is required")
+		}
+		wsName, _ := wsNameAny.(string)
+		collection, _ := colAny.(string)
+
+		ws, err := s.registry.Get(wsName)
+		if err != nil {
+			return nil, workspaceToRPCError(err)
+		}
+
+		reqs, err := s.bruno.ListRequests(ws.Path, collection)
+		if err != nil {
+			return nil, NewError(CodeInternalError, err.Error())
+		}
+
+		return map[string]any{"requests": reqs}, nil
+
 	default:
-		return nil, NewError(CodeMethodNotFound, "Unknown tool: "+params.Tool)
+		return nil, NewError(CodeMethodNotFound, "Unknown tool: "+toolName)
+	}
+}
+
+func workspaceToRPCError(err error) *RPCError {
+	switch {
+	case errors.Is(err, workspace.ErrInvalidName),
+		errors.Is(err, workspace.ErrInvalidPath):
+		return NewError(CodeInvalidParams, err.Error())
+	case errors.Is(err, workspace.ErrNotFound):
+		return NewError(CodeInvalidParams, err.Error())
+	default:
+		return NewError(CodeInternalError, err.Error())
 	}
 }
