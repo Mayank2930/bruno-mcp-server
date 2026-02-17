@@ -13,7 +13,7 @@ func writeResponse(w *bufio.Writer, resp Response) error {
 	}
 
 	if _, err := w.Write(b); err != nil {
-		return nil
+		return err
 	}
 
 	return w.WriteByte('\n')
@@ -21,10 +21,10 @@ func writeResponse(w *bufio.Writer, resp Response) error {
 
 func parseAndValidateRequest(line []byte) (Request, *RPCError) {
 	var base struct {
-		JSONRPC json.RawMessage
-		ID      json.RawMessage
-		Method  json.RawMessage
-		Params  json.RawMessage
+		JSONRPC json.RawMessage `json:"jsonrpc"`
+		ID      json.RawMessage `json:"id,omitempty"`
+		Method  json.RawMessage `json:"method"`
+		Params  json.RawMessage `json:"params,omitempty"`
 	}
 
 	if err := json.Unmarshal(line, &base); err != nil {
