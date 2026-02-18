@@ -33,9 +33,11 @@ func (e *CommandError) Error() string {
 	return fmt.Sprintf("bruno command error: %v: %v", e.Cmd, e.Err)
 }
 
+func (e *CommandError) Unwrap() error { return ErrCommandFailed }
+
 func (c *Client) run(ctx context.Context, args ...string) (stdout, stderr string, err error) {
 	if c.brunoPath == "" {
-		return "", "", errors.New("bru not found in file PATH")
+		return "", "", ErrBruNotFound
 	}
 
 	cmd := exec.CommandContext(ctx, c.brunoPath, args...)
@@ -71,7 +73,6 @@ func (c *Client) ListCollections(workspaceDir string) ([]string, error) {
 
 	var cols []string
 
-	// If the workspace itself is a collection root (has bruno.json), include it.
 	if fileExists(filepath.Join(workspaceDir, "bruno.json")) {
 		cols = append(cols, filepath.Base(workspaceDir))
 	}
@@ -103,12 +104,9 @@ func (c *Client) ListRequests(workspaceDir, collection string) ([]string, error)
 	workspaceDir = filepath.Clean(workspaceDir)
 	collection = strings.TrimSpace(collection)
 	if collection == "" {
-		return nil, errors.New("collection is required")
+		return nil, fmt.Errorf("%w: collection is required", ErrInvalidRequestPath)
 	}
 
-	// Resolve collection root:
-	// - if workspace itself is a collection and collection matches base name => use workspaceDir
-	// - else treat collection as a subdir under workspaceDir (safe join)
 	var colRoot string
 	if fileExists(filepath.Join(workspaceDir, "bruno.json")) && collection == filepath.Base(workspaceDir) {
 		colRoot = workspaceDir

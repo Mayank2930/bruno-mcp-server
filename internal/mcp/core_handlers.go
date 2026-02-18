@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/Mayank2930/bruno-mcp-server/internal/bruno"
 	"github.com/Mayank2930/bruno-mcp-server/internal/workspace"
 )
 
@@ -145,6 +146,48 @@ func (s *Server) handleToolList(ctx context.Context, req Request) (any, *RPCErro
 					},
 				},
 			},
+			{
+				"name":        "collections.create",
+				"description": "Create a Bruno collection (filesystem fallback)",
+				"inputSchema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"workspace": map[string]any{"type": "string"},
+						"name":      map[string]any{"type": "string"},
+						"overwrite": map[string]any{"type": "boolean"},
+					},
+					"required": []string{"workspace", "name"},
+				},
+				"outputSchema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"name": map[string]any{"type": "string"},
+						"path": map[string]any{"type": "string"},
+					},
+				},
+			},
+			{
+				"name":        "requests.create",
+				"description": "Create a Bruno request file (filesystem fallback)",
+				"inputSchema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"workspace":  map[string]any{"type": "string"},
+						"collection": map[string]any{"type": "string"},
+						"path":       map[string]any{"type": "string"},
+						"method":     map[string]any{"type": "string"},
+						"url":        map[string]any{"type": "string"},
+						"overwrite":  map[string]any{"type": "boolean"},
+					},
+					"required": []string{"workspace", "collection", "path", "method", "url"},
+				},
+				"outputSchema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"path": map[string]any{"type": "string"},
+					},
+				},
+			},
 		},
 	}, nil
 }
@@ -251,6 +294,51 @@ func (s *Server) handleToolsCall(ctx context.Context, req Request) (any, *RPCErr
 		}
 
 		return map[string]any{"requests": reqs}, nil
+
+	case "collections.create":
+		wsName, _ := params.Arguments["workspace"].(string)
+		name, _ := params.Arguments["name"].(string)
+
+		overwrite := false
+		if v, ok := params.Arguments["overwrite"].(bool); ok {
+			overwrite = v
+		}
+
+		ws, err := s.registry.Get(wsName)
+		if err != nil {
+			return nil, workspaceToRPCError(err)
+		}
+
+		dir, err := s.bruno.CreateCollection(ws.Path, name, bruno.CreateCollectionOptions{Overwrite: overwrite})
+		if err != nil {
+			return nil, NewError(CodeInternalError, err.Error())
+		}
+
+		return map[string]any{"name": name, "path": dir}, nil
+
+	case "requests.create":
+		wsName, _ := params.Arguments["workspace"].(string)
+		col, _ := params.Arguments["collection"].(string)
+		relPath, _ := params.Arguments["path"].(string)
+		method, _ := params.Arguments["method"].(string)
+		url, _ := params.Arguments["url"].(string)
+
+		overwrite := false
+		if v, ok := params.Arguments["overwrite"].(bool); ok {
+			overwrite = v
+		}
+
+		ws, err := s.registry.Get(wsName)
+		if err != nil {
+			return nil, workspaceToRPCError(err)
+		}
+
+		created, err := s.bruno.CreateRequest(ws.Path, col, relPath, method, url, bruno.CreateRequestOptions{Overwrite: overwrite})
+		if err != nil {
+			return nil, NewError(CodeInternalError, err.Error())
+		}
+
+		return map[string]any{"path": created}, nil
 
 	default:
 		return nil, NewError(CodeMethodNotFound, "Unknown tool: "+toolName)
